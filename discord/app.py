@@ -31,6 +31,8 @@ from collections import OrderedDict
 from .enums import SlashCommandOptionType
 from .interactions import Interaction
 from .utils import cached_property
+from .member import Member
+from .user import User
 
 
 class SlashCommand:
@@ -178,10 +180,54 @@ class OptionChoice:
     def to_dict(self):
         return {"name": self.name, "value": self.value}
 
-
 class UserCommand:
     type = 2
 
+    def __new__(cls, *args, **kwargs):
+        self = super().__new__(cls)
+
+        self.__original_kwargs__ = kwargs.copy()
+        return self
+
+    def __init__(self, func, *args, **kwargs):
+        if not asyncio.iscoroutinefunction(func):
+            raise TypeError("Callback must be a coroutine.")
+        self.callback = func
+
+        self.guild_ids = kwargs.get("guild_ids", None)
+
+        self.description = ""
+        self.name = kwargs.pop("name", func.__name__)
+        if not isinstance(self.name, str):
+            raise TypeError("Name of a command must be a string.")
+
+    def to_dict(self):
+        return {
+            "name":self.name,
+            "description":self.description,
+            "type":self.type
+        }
+
+    async def invoke(self, interaction):
+        if "members" not in interaction.data["resolved"]:
+            _data = interaction.data["resolved"]["users"]
+            for i, v in _data.items():
+                v["id"] = int(i)
+                user = v
+            target = User(state=interaction._state, data=user)
+        else:
+            _data = interaction.data["resolved"]["members"]
+            for i, v in _data.items():
+                v["id"] = int(i)
+                member = v
+            _data = interaction.data["resolved"]["users"]
+            for i, v in _data.items():
+                v["id"] = int(i)
+                user = v
+            member["user"] = user
+            target = Member(data=member, guild=interaction._state._get_guild(interaction.guild_id), state=interaction._state)
+        ctx = InteractionContext(interaction)
+        await self.callback(ctx, target)
 
 class MessageCommand:
     type = 3
